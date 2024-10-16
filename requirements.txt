@@ -6,3 +6,4 @@ pyodbc==5.1.0
 requests==2.32.3
 urllib3==2.2.2
 mysql-connector-python==8.0.33 
+PyJWT==2.8.0
