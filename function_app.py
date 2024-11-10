@@ -3,8 +3,13 @@ import azure.functions as func
 import logging
 import json
 import mysql.connector
-import jwt  # Importamos PyJWT
+import jwt
 from jwt.exceptions import InvalidTokenError
+
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+import base64
+import hashlib
 
 app = func.FunctionApp()
 
@@ -50,16 +55,52 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
             }
         )
 
-    # Verificar el token
+    # Verificar el token y desencriptar los datos
     try:
         decoded_token = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
-        # Puedes obtener información del usuario desde el token decodificado si lo necesitas
-        user_email = decoded_token.get('sub')
+        encrypted_data_base64 = decoded_token.get('data')
+        
+        if not encrypted_data_base64:
+            return func.HttpResponse(
+                "El token no contiene datos encriptados",
+                status_code=400,
+                headers={
+                    'Access-Control-Allow-Origin': '*'
+                }
+            )
+
+        # Derivar la clave AES como en Java
+        key_bytes = hashlib.sha256(SECRET_KEY.encode('utf-8')).digest()
+        key_bytes16 = key_bytes[:16]  # Tomar los primeros 16 bytes para AES-128
+
+        # Decodificar y desencriptar los datos
+        encrypted_data_bytes = base64.b64decode(encrypted_data_base64)
+        cipher = AES.new(key_bytes16, AES.MODE_ECB)
+        decrypted_data_bytes = cipher.decrypt(encrypted_data_bytes)
+        decrypted_data = unpad(decrypted_data_bytes, AES.block_size).decode('utf-8')
+
+        # Parsear los datos JSON
+        data = json.loads(decrypted_data)
+        user_email = data.get('email')
+        user_role = data.get('role')
+        user_id_from_token = data.get('id')
+
+        logging.info(f"Datos del token: email={user_email}, role={user_role}, id={user_id_from_token}")
+
     except InvalidTokenError as e:
         logging.error(f"Token inválido: {str(e)}")
         return func.HttpResponse(
             "Token inválido",
             status_code=401,
+            headers={
+                'Access-Control-Allow-Origin': '*'
+            }
+        )
+    except Exception as e:
+        logging.error(f"Error al procesar el token JWT: {str(e)}")
+        return func.HttpResponse(
+            f"Error al procesar el token JWT: {str(e)}",
+            status_code=500,
             headers={
                 'Access-Control-Allow-Origin': '*'
             }
@@ -96,9 +137,8 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
         # Analizar el cuerpo de la solicitud JSON
         try:
             req_body = req.get_json()
-            user_id = req_body.get("id")
             is_update = req_body.get("is_update", False)
-            new_data = req_body.get("new_data")  # Datos actualizados del usuario
+            new_data = req_body.get("new_data")  # Datos actualizados
         except ValueError:
             return func.HttpResponse(
                 "JSON inválido",
@@ -108,9 +148,18 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
                 }
             )
 
-        if not user_id:
+        # Determinar la tabla y campos según el rol
+        if user_role in ['Volunteer', 'User']:
+            table_name = 'users'
+            id_field = 'user_id'
+            allowed_fields = ['first_name', 'last_name', 'email', 'phone', 'address']  # Actualiza según tus campos
+        elif user_role == 'Company':
+            table_name = 'companies'
+            id_field = 'company_id'
+            allowed_fields = ['company_name', 'email', 'phone', 'address']  # Actualiza según tus campos
+        else:
             return func.HttpResponse(
-                "Se requiere el ID de usuario",
+                f"Rol desconocido: {user_role}",
                 status_code=400,
                 headers={
                     'Access-Control-Allow-Origin': '*'
@@ -118,7 +167,7 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
             )
 
         if is_update:
-            # Actualizar el usuario
+            # Actualizar el usuario o compañía
             if not new_data:
                 return func.HttpResponse(
                     "Se requieren nuevos datos para la actualización",
@@ -128,27 +177,39 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
                     }
                 )
 
-            update_query = "UPDATE users SET "
+            # Filtrar los campos permitidos para actualizar
+            filtered_new_data = {k: v for k, v in new_data.items() if k in allowed_fields}
+
+            if not filtered_new_data:
+                return func.HttpResponse(
+                    "No hay campos válidos para actualizar",
+                    status_code=400,
+                    headers={
+                        'Access-Control-Allow-Origin': '*'
+                    }
+                )
+
+            update_query = f"UPDATE {table_name} SET "
             update_values = []
 
             # Preparar la consulta y los valores dinámicamente
-            for key, value in new_data.items():
+            for key, value in filtered_new_data.items():
                 update_query += f"{key} = %s, "
                 update_values.append(value)
 
             # Eliminar la última coma y espacio
-            update_query = update_query.rstrip(', ') + " WHERE user_id = %s"
-            update_values.append(user_id)
+            update_query = update_query.rstrip(', ') + f" WHERE {id_field} = %s"
+            update_values.append(user_id_from_token)
 
             logging.info(f'Ejecutando consulta de actualización: {update_query}')
             cursor.execute(update_query, tuple(update_values))
             connection.commit()
-            logging.info('Usuario actualizado exitosamente.')
+            logging.info(f'{table_name} actualizado exitosamente.')
 
-        # Obtener detalles del usuario
-        select_query = "SELECT * FROM users WHERE user_id = %s"
+        # Obtener detalles del usuario o compañía
+        select_query = f"SELECT * FROM {table_name} WHERE {id_field} = %s"
         logging.info(f'Ejecutando consulta: {select_query}')
-        cursor.execute(select_query, (user_id,))
+        cursor.execute(select_query, (user_id_from_token,))
         user_data = cursor.fetchone()
 
         # Cerrar la conexión a la base de datos
@@ -157,16 +218,17 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
 
         if not user_data:
             return func.HttpResponse(
-                "Usuario no encontrado",
+                f"{user_role} no encontrado",
                 status_code=404,
                 headers={
                     'Access-Control-Allow-Origin': '*'
                 }
             )
 
-        # Devolver los datos del usuario
+        # Devolver los datos del usuario o compañía
+        response_key = 'user_data' if user_role in ['Volunteer', 'User'] else 'company_data'
         response_body = {
-            'user_data': user_data
+            response_key: user_data
         }
 
         return func.HttpResponse(
