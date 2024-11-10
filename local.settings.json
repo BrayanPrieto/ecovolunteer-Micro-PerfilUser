@@ -1,0 +1,14 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "AzureWebJobsFeatureFlags": "EnableWorkerIndexing",
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+ 
+    "MYSQL_DATABASE": "ecovolunteer",
+    "MYSQL_USER": "root",
+    "MYSQL_PASSWORD": "root",
+
+    "jwt.secret":"TuClaveSecretaMuySegura1234567890"
+  }
+}
