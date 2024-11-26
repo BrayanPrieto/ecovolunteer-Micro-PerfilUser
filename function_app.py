@@ -152,11 +152,11 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
         if user_role in ['Volunteer', 'User']:
             table_name = 'users'
             id_field = 'user_id'
-            allowed_fields = ['first_name', 'last_name', 'email', 'phone', 'address']  # Actualiza según tus campos
+            allowed_fields = ['first_name', 'last_name', 'email', 'phone_number', 'address']  # Actualiza según tus campos
         elif user_role == 'Company':
             table_name = 'companies'
             id_field = 'company_id'
-            allowed_fields = ['company_name', 'email', 'phone', 'address']  # Actualiza según tus campos
+            allowed_fields = ['company_name', 'email', 'phone_number', 'address']  # Actualiza según tus campos
         else:
             return func.HttpResponse(
                 f"Rol desconocido: {user_role}",
