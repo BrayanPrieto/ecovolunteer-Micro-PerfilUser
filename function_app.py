@@ -147,7 +147,7 @@ def http_trigger(req: func.HttpRequest) -> func.HttpResponse:
                     'Access-Control-Allow-Origin': '*'
                 }
             )
-
+        #test
         # Determinar la tabla y campos según el rol
         if user_role in ['Volunteer', 'User']:
             table_name = 'users'
